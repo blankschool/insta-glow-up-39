@@ -10,17 +10,54 @@ export default function AuthCallback() {
     const handleCallback = async () => {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get('code');
+      const stateParam = urlParams.get('state');
       const error = urlParams.get('error');
 
       if (error) {
         setStatus('Erro na autenticação: ' + error);
-        setTimeout(() => navigate('/auth'), 3000);
+        setTimeout(() => navigate('/auth?error=unknown'), 2000);
         return;
       }
 
       if (!code) {
         setStatus('Código de autorização não encontrado');
-        setTimeout(() => navigate('/auth'), 3000);
+        setTimeout(() => navigate('/auth?error=unknown'), 2000);
+        return;
+      }
+
+      // Validate state parameter
+      const storedState = localStorage.getItem('oauth_state');
+      if (!stateParam || stateParam !== storedState) {
+        console.error('State mismatch:', { stateParam, storedState });
+        setStatus('Sessão de autenticação inválida');
+        localStorage.removeItem('oauth_state');
+        setTimeout(() => navigate('/auth?error=invalid_state'), 2000);
+        return;
+      }
+
+      // Parse state to get login method and redirect
+      let loginMethod = 'instagram';
+      let redirectTo = '/';
+      try {
+        const stateData = JSON.parse(atob(stateParam));
+        loginMethod = stateData.login_method || 'instagram';
+        redirectTo = stateData.redirect_to || '/';
+      } catch (e) {
+        console.warn('Could not parse state data');
+      }
+
+      // Clear stored state
+      localStorage.removeItem('oauth_state');
+
+      // Check if user is logged in
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setStatus('Por favor, faça login primeiro');
+        // Store the code temporarily to retry after login
+        localStorage.setItem('pending_oauth_code', code);
+        localStorage.setItem('pending_oauth_method', loginMethod);
+        localStorage.setItem('auth_redirect_to', redirectTo);
+        setTimeout(() => navigate('/auth?error=no_session'), 2000);
         return;
       }
 
@@ -28,23 +65,30 @@ export default function AuthCallback() {
         setStatus('Trocando código por token...');
         
         const { data, error: fnError } = await supabase.functions.invoke('instagram-oauth', {
-          body: { code }
+          body: { 
+            code,
+            user_id: session.user.id,
+            provider: loginMethod
+          }
         });
 
         if (fnError) throw fnError;
 
-        if (data?.access_token) {
-          localStorage.setItem('instagram_access_token', data.access_token);
-          localStorage.setItem('instagram_user_id', data.user_id);
-          setStatus('Autenticação concluída! Redirecionando...');
-          navigate('/');
+        if (data?.success) {
+          setStatus('Conta conectada com sucesso! Redirecionando...');
+          // Clear any old localStorage tokens
+          localStorage.removeItem('instagram_access_token');
+          localStorage.removeItem('instagram_user_id');
+          localStorage.removeItem('demoMode');
+          
+          setTimeout(() => navigate(redirectTo), 1000);
         } else {
-          throw new Error('Token não recebido');
+          throw new Error(data?.error || 'Token não recebido');
         }
       } catch (err: any) {
         console.error('OAuth error:', err);
         setStatus('Erro ao processar autenticação: ' + err.message);
-        setTimeout(() => navigate('/auth'), 3000);
+        setTimeout(() => navigate('/auth?error=token_exchange_failed'), 3000);
       }
     };
 

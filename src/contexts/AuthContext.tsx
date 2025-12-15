@@ -1,13 +1,29 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, Session } from '@supabase/supabase-js';
+import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+
+interface ConnectedAccount {
+  id: string;
+  provider: 'instagram' | 'facebook';
+  provider_account_id: string;
+  account_username: string | null;
+  account_name: string | null;
+  profile_picture_url: string | null;
+  token_expires_at: string | null;
+}
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  signInWithFacebook: () => Promise<void>;
+  connectedAccounts: ConnectedAccount[];
+  loadingAccounts: boolean;
+  connectWithInstagram: () => Promise<void>;
+  connectWithFacebook: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<{ error: AuthError | null }>;
+  signUpWithEmail: (email: string, password: string, fullName?: string) => Promise<{ error: AuthError | null }>;
   signOut: () => Promise<void>;
+  refreshConnectedAccounts: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -16,6 +32,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [connectedAccounts, setConnectedAccounts] = useState<ConnectedAccount[]>([]);
+  const [loadingAccounts, setLoadingAccounts] = useState(false);
+
+  const fetchConnectedAccounts = async (userId: string) => {
+    setLoadingAccounts(true);
+    try {
+      const { data, error } = await supabase
+        .from('connected_accounts')
+        .select('id, provider, provider_account_id, account_username, account_name, profile_picture_url, token_expires_at')
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('Error fetching connected accounts:', error);
+        return;
+      }
+
+      setConnectedAccounts(data || []);
+    } catch (err) {
+      console.error('Error fetching connected accounts:', err);
+    } finally {
+      setLoadingAccounts(false);
+    }
+  };
+
+  const refreshConnectedAccounts = async () => {
+    if (user) {
+      await fetchConnectedAccounts(user.id);
+    }
+  };
 
   useEffect(() => {
     // Set up auth state listener FIRST
@@ -24,6 +69,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+
+        // Fetch connected accounts when user logs in
+        if (session?.user) {
+          setTimeout(() => {
+            fetchConnectedAccounts(session.user.id);
+          }, 0);
+        } else {
+          setConnectedAccounts([]);
+        }
       }
     );
 
@@ -32,12 +86,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+
+      if (session?.user) {
+        fetchConnectedAccounts(session.user.id);
+      }
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const signInWithFacebook = async () => {
+  const generateOAuthState = (loginMethod: string, redirectTo: string = '/') => {
+    const state = btoa(JSON.stringify({
+      nonce: crypto.randomUUID(),
+      login_method: loginMethod,
+      redirect_to: redirectTo,
+      timestamp: Date.now(),
+    }));
+    localStorage.setItem('oauth_state', state);
+    return state;
+  };
+
+  const connectWithInstagram = async () => {
     const clientId = '1728352261135208';
     const redirectUri = 'https://insta-glow-up-39.lovable.app/auth/callback';
     const scopes = [
@@ -48,17 +117,83 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       'instagram_business_manage_insights'
     ].join(',');
     
-    const instagramAuthUrl = `https://www.instagram.com/oauth/authorize?force_reauth=true&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}`;
+    const state = generateOAuthState('instagram', localStorage.getItem('auth_redirect_to') || '/');
+    
+    const instagramAuthUrl = `https://www.instagram.com/oauth/authorize?force_reauth=true&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(state)}`;
     
     window.location.href = instagramAuthUrl;
   };
 
+  const connectWithFacebook = async () => {
+    const clientId = '1728352261135208';
+    const redirectUri = 'https://insta-glow-up-39.lovable.app/auth/callback';
+    const scopes = [
+      'instagram_business_basic',
+      'instagram_business_manage_messages',
+      'instagram_business_manage_comments',
+      'instagram_business_content_publish',
+      'instagram_business_manage_insights',
+      'pages_show_list',
+      'pages_read_engagement'
+    ].join(',');
+    
+    const state = generateOAuthState('facebook', localStorage.getItem('auth_redirect_to') || '/');
+    
+    // Use Facebook OAuth endpoint with Instagram scopes
+    const facebookAuthUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${encodeURIComponent(state)}`;
+    
+    window.location.href = facebookAuthUrl;
+  };
+
+  const signInWithEmail = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    return { error };
+  };
+
+  const signUpWithEmail = async (email: string, password: string, fullName?: string) => {
+    const redirectUrl = `${window.location.origin}/auth`;
+    
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: redirectUrl,
+        data: {
+          full_name: fullName,
+        },
+      },
+    });
+    return { error };
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
+    // Clear any localStorage data
+    localStorage.removeItem('instagram_access_token');
+    localStorage.removeItem('instagram_user_id');
+    localStorage.removeItem('demoMode');
+    localStorage.removeItem('oauth_state');
+    localStorage.removeItem('auth_redirect_to');
+    setConnectedAccounts([]);
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signInWithFacebook, signOut }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      session, 
+      loading, 
+      connectedAccounts,
+      loadingAccounts,
+      connectWithInstagram, 
+      connectWithFacebook,
+      signInWithEmail,
+      signUpWithEmail,
+      signOut,
+      refreshConnectedAccounts,
+    }}>
       {children}
     </AuthContext.Provider>
   );

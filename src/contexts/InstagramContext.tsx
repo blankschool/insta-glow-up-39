@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInstagramApi, InstagramProfile, InstagramAccount, InstagramMedia, AudienceDemographics } from '@/hooks/useInstagramApi';
+import { supabase } from '@/integrations/supabase/client';
 
 interface InstagramContextType {
   accounts: InstagramAccount[];
@@ -83,7 +84,7 @@ const demoMedia: InstagramMedia[] = [
 ];
 
 export function InstagramProvider({ children }: { children: React.ReactNode }) {
-  const { user, session } = useAuth();
+  const { user, connectedAccounts } = useAuth();
   const api = useInstagramApi();
   
   const [accounts, setAccounts] = useState<InstagramAccount[]>([]);
@@ -95,12 +96,7 @@ export function InstagramProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Check for Instagram token from localStorage (direct Instagram OAuth)
-  const instagramToken = localStorage.getItem('instagram_access_token');
-  const instagramUserId = localStorage.getItem('instagram_user_id');
-  const isAuthenticated = !!(instagramToken && instagramUserId) || !!session?.provider_token;
-  
-  const isDemoMode = localStorage.getItem('demoMode') === 'true' && !user && !isAuthenticated;
+  const isDemoMode = localStorage.getItem('demoMode') === 'true' && !user;
 
   const loadAccountData = useCallback(async (account: InstagramAccount) => {
     setLoading(true);
@@ -136,74 +132,86 @@ export function InstagramProvider({ children }: { children: React.ReactNode }) {
     }
   }, [selectedAccount, loadAccountData]);
 
-  // Load Instagram accounts when user logs in or has localStorage token
+  // Load Instagram data when user has connected accounts
   useEffect(() => {
     const loadAccounts = async () => {
-      // Check for direct Instagram OAuth (localStorage token)
-      if (instagramToken && instagramUserId) {
-        setLoading(true);
-        try {
-          // For direct Instagram OAuth, get profile directly
-          const profileData = await api.getUserProfile(instagramUserId);
-          if (profileData) {
-            setProfile(profileData);
-            // Create a synthetic account for compatibility
-            const syntheticAccount: InstagramAccount = {
-              pageId: instagramUserId,
-              pageName: profileData.username || 'Instagram Account',
-              instagram: profileData,
-            };
-            setAccounts([syntheticAccount]);
-            setSelectedAccount(syntheticAccount);
-            
-            // Load additional data
-            const [mediaData, demographicsData, onlineData] = await Promise.all([
-              api.getMedia(instagramUserId),
-              api.getAudienceDemographics(instagramUserId),
-              api.getOnlineFollowers(instagramUserId),
-            ]);
-            setMedia(mediaData);
-            setDemographics(demographicsData);
-            setOnlineFollowers(onlineData);
-          }
-        } catch (err: any) {
-          setError(err.message);
-        } finally {
-          setLoading(false);
-        }
-        return;
-      }
-
-      // Check for Facebook OAuth (Supabase session)
-      if (user && session?.provider_token) {
-        setLoading(true);
-        try {
-          const accountsList = await api.getInstagramAccounts();
-          setAccounts(accountsList);
-          
-          // Auto-select first account if available
-          if (accountsList.length > 0) {
-            selectAccount(accountsList[0]);
-          }
-        } catch (err: any) {
-          setError(err.message);
-        } finally {
-          setLoading(false);
-        }
-        return;
-      }
-
       // Demo mode fallback
       if (isDemoMode) {
         setProfile(demoProfile);
         setMedia(demoMedia);
         setDemographics(demoDemographics);
         setOnlineFollowers(demoOnlineFollowers);
+        return;
+      }
+
+      // Check for connected accounts in database
+      if (user && connectedAccounts.length > 0) {
+        setLoading(true);
+        try {
+          // Get the access token from database via edge function
+          const { data: tokenData, error: tokenError } = await supabase.functions.invoke('get-instagram-token', {
+            body: { user_id: user.id }
+          });
+
+          if (tokenError) {
+            console.error('Error fetching token:', tokenError);
+            setError('Erro ao carregar dados da conta');
+            setLoading(false);
+            return;
+          }
+
+          if (tokenData?.access_token && tokenData?.instagram_user_id) {
+            // Store token temporarily for API calls
+            localStorage.setItem('instagram_access_token', tokenData.access_token);
+            localStorage.setItem('instagram_user_id', tokenData.instagram_user_id);
+
+            // Get profile directly
+            const profileData = await api.getUserProfile(tokenData.instagram_user_id);
+            if (profileData) {
+              setProfile(profileData);
+              
+              // Create a synthetic account for compatibility
+              const syntheticAccount: InstagramAccount = {
+                pageId: tokenData.instagram_user_id,
+                pageName: profileData.username || 'Instagram Account',
+                instagram: profileData,
+              };
+              setAccounts([syntheticAccount]);
+              setSelectedAccount(syntheticAccount);
+              
+              // Load additional data
+              const [mediaData, demographicsData, onlineData] = await Promise.all([
+                api.getMedia(tokenData.instagram_user_id),
+                api.getAudienceDemographics(tokenData.instagram_user_id),
+                api.getOnlineFollowers(tokenData.instagram_user_id),
+              ]);
+              setMedia(mediaData);
+              setDemographics(demographicsData);
+              setOnlineFollowers(onlineData);
+            }
+          }
+        } catch (err: any) {
+          console.error('Error loading accounts:', err);
+          setError(err.message);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      // Clear data if no user/accounts
+      if (!user || connectedAccounts.length === 0) {
+        setAccounts([]);
+        setSelectedAccount(null);
+        setProfile(null);
+        setMedia([]);
+        setDemographics({});
+        setOnlineFollowers({});
       }
     };
 
     loadAccounts();
-  }, [user, session, isDemoMode, api, selectAccount, instagramToken, instagramUserId]);
+  }, [user, connectedAccounts, isDemoMode, api]);
 
   return (
     <InstagramContext.Provider value={{

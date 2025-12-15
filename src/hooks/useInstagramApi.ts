@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useAuth } from '@/contexts/AuthContext';
 
 export interface InstagramProfile {
   id: string;
@@ -48,18 +47,16 @@ export interface InstagramAccount {
 }
 
 export function useInstagramApi() {
-  const { session } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const getAccessToken = useCallback(() => {
-    // First try localStorage (direct Instagram OAuth)
+    // Get token from localStorage (set by InstagramContext after fetching from DB)
     const storedToken = localStorage.getItem('instagram_access_token');
     if (storedToken) return storedToken;
     
-    // Fallback to Supabase session (Facebook OAuth)
-    return session?.provider_token || null;
-  }, [session]);
+    return null;
+  }, []);
 
   const callInstagramApi = useCallback(async (action: string, params: Record<string, any> = {}) => {
     const accessToken = getAccessToken();
