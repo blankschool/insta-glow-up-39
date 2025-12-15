@@ -2,13 +2,29 @@ import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInstagram } from '@/contexts/InstagramContext';
 import { Button } from '@/components/ui/button';
-import { Instagram, Facebook, User, Loader2, Unlink } from 'lucide-react';
+import { Instagram, Facebook, User, Loader2, Unlink, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 const Profile = () => {
   const { connectedAccounts, connectWithInstagram, connectWithFacebook, disconnectAccount } = useAuth();
-  const { profile, loading } = useInstagram();
+  const { profile, loading, refreshData } = useInstagram();
   const [disconnecting, setDisconnecting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Use profile from API, or fallback to connected_accounts data
+  const displayProfile = profile || (connectedAccounts[0] ? {
+    id: connectedAccounts[0].provider_account_id,
+    username: connectedAccounts[0].account_username,
+    name: connectedAccounts[0].account_name,
+    profile_picture_url: connectedAccounts[0].profile_picture_url,
+  } : null);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await refreshData();
+    setRefreshing(false);
+    toast.success('Dados atualizados');
+  };
 
   const hasConnectedAccount = connectedAccounts && connectedAccounts.length > 0;
 
@@ -75,44 +91,63 @@ const Profile = () => {
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           <p className="text-muted-foreground">Carregando perfil...</p>
         </div>
-      ) : profile ? (
+      ) : displayProfile ? (
         <div className="chart-card p-6 space-y-6">
-          <div className="flex items-center gap-4">
-            {profile.profile_picture_url ? (
-              <img 
-                src={profile.profile_picture_url} 
-                alt={profile.username}
-                className="w-20 h-20 rounded-full object-cover"
-              />
-            ) : (
-              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
-                <User className="w-10 h-10 text-muted-foreground" />
-              </div>
-            )}
-            <div>
-              <h2 className="text-xl font-bold">@{profile.username}</h2>
-              {profile.name && (
-                <p className="text-muted-foreground">{profile.name}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              {displayProfile.profile_picture_url ? (
+                <img 
+                  src={displayProfile.profile_picture_url} 
+                  alt={displayProfile.username || 'Profile'}
+                  className="w-20 h-20 rounded-full object-cover"
+                />
+              ) : (
+                <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+                  <User className="w-10 h-10 text-muted-foreground" />
+                </div>
               )}
+              <div>
+                <h2 className="text-xl font-bold">
+                  {displayProfile.username ? `@${displayProfile.username}` : (displayProfile.name || 'Instagram Business')}
+                </h2>
+                {displayProfile.name && displayProfile.username && (
+                  <p className="text-muted-foreground">{displayProfile.name}</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-1">
+                  via {connectedAccounts[0]?.provider === 'facebook' ? 'Facebook' : 'Instagram'}
+                </p>
+              </div>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Atualizar
+            </Button>
           </div>
 
-          <div className="flex flex-wrap gap-6 text-center">
-            <div>
-              <p className="text-2xl font-bold">{profile.media_count?.toLocaleString() || 0}</p>
-              <p className="text-sm text-muted-foreground">Posts</p>
+          {profile && (
+            <div className="flex flex-wrap gap-6 text-center">
+              <div>
+                <p className="text-2xl font-bold">{profile.media_count?.toLocaleString() || 0}</p>
+                <p className="text-sm text-muted-foreground">Posts</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{profile.followers_count?.toLocaleString() || 0}</p>
+                <p className="text-sm text-muted-foreground">Seguidores</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{profile.follows_count?.toLocaleString() || 0}</p>
+                <p className="text-sm text-muted-foreground">Seguindo</p>
+              </div>
             </div>
-            <div>
-              <p className="text-2xl font-bold">{profile.followers_count?.toLocaleString() || 0}</p>
-              <p className="text-sm text-muted-foreground">Seguidores</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{profile.follows_count?.toLocaleString() || 0}</p>
-              <p className="text-sm text-muted-foreground">Seguindo</p>
-            </div>
-          </div>
+          )}
 
-          {profile.biography && (
+          {profile?.biography && (
             <div>
               <h3 className="text-sm font-medium text-muted-foreground mb-1">Bio</h3>
               <p className="text-sm">{profile.biography}</p>

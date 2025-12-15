@@ -135,10 +135,12 @@ export function Sidebar() {
                 <p className="truncate text-sm font-medium">
                   {connectedAccounts[0]?.account_username 
                     ? `@${connectedAccounts[0].account_username}` 
-                    : connectedAccounts[0]?.account_name || user?.email || 'Usuário'}
+                    : connectedAccounts[0]?.account_name 
+                      || (connectedAccounts[0]?.provider === 'facebook' ? 'Instagram Business' : 'Instagram')
+                  }
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {connectedAccounts[0]?.provider === 'facebook' ? 'Facebook' : 'Instagram'}
+                  via {connectedAccounts[0]?.provider === 'facebook' ? 'Facebook' : 'Instagram'}
                 </p>
               </div>
               <button

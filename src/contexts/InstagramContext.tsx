@@ -108,14 +108,26 @@ export function InstagramProvider({ children }: { children: React.ReactNode }) {
           sessionStorage.setItem('instagram_user_id', tokenData.instagram_user_id);
 
           // Get profile directly
-          const profileData = await api.getUserProfile(tokenData.instagram_user_id);
+          let profileData = await api.getUserProfile(tokenData.instagram_user_id);
+          
+          // If API profile fetch fails, use data from connected_accounts as fallback
+          if (!profileData && connectedAccounts[0]) {
+            const account = connectedAccounts[0];
+            profileData = {
+              id: account.provider_account_id,
+              username: account.account_username || undefined,
+              name: account.account_name || undefined,
+              profile_picture_url: account.profile_picture_url || undefined,
+            };
+          }
+          
           if (profileData) {
             setProfile(profileData);
             
             // Create a synthetic account for compatibility
             const syntheticAccount: InstagramAccount = {
               pageId: tokenData.instagram_user_id,
-              pageName: profileData.username || 'Instagram Account',
+              pageName: profileData.username || connectedAccounts[0]?.account_name || 'Instagram Account',
               instagram: profileData,
             };
             setAccounts([syntheticAccount]);
@@ -133,6 +145,8 @@ export function InstagramProvider({ children }: { children: React.ReactNode }) {
             
             // Mark as loaded for this user
             loadedUserIdRef.current = user.id;
+          } else {
+            setError('Could not load profile data');
           }
         }
       } catch (err: any) {

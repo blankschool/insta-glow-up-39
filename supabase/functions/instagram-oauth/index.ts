@@ -169,11 +169,24 @@ serve(async (req) => {
       expiresIn = longLivedData.expires_in || 5184000;
     }
 
-    // Get Instagram profile info
-    const profileResponse = await fetch(
-      `https://graph.instagram.com/v18.0/${instagramUserId}?fields=id,username,name,profile_picture_url&access_token=${accessToken}`
-    );
-    const profileData = await profileResponse.json();
+    // Get Instagram profile info - use correct API based on provider
+    let profileData: { id?: string; username?: string; name?: string; profile_picture_url?: string } = {};
+    
+    if (provider === 'facebook') {
+      // For Facebook-connected Instagram Business accounts, use Facebook Graph API
+      const profileResponse = await fetch(
+        `https://graph.facebook.com/v24.0/${instagramUserId}?fields=id,username,name,profile_picture_url&access_token=${accessToken}`
+      );
+      profileData = await profileResponse.json();
+      console.log('Facebook profile data:', JSON.stringify(profileData));
+    } else {
+      // For direct Instagram OAuth, use Instagram Graph API
+      const profileResponse = await fetch(
+        `https://graph.instagram.com/v18.0/${instagramUserId}?fields=id,username,name,profile_picture_url&access_token=${accessToken}`
+      );
+      profileData = await profileResponse.json();
+      console.log('Instagram profile data:', JSON.stringify(profileData));
+    }
 
     // Save to database using service role
     const supabase = createClient(supabaseUrl, supabaseServiceKey);

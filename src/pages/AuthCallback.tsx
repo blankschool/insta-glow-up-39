@@ -37,11 +37,11 @@ export default function AuthCallback() {
         return;
       }
 
-      // Validate state timestamp (max 5 minutes)
+      // Validate state timestamp (max 10 minutes)
       try {
         const stateData = JSON.parse(atob(stateParam));
         const stateAge = Date.now() - stateData.timestamp;
-        if (stateAge > 5 * 60 * 1000) {
+        if (stateAge > 10 * 60 * 1000) {
           setStatus('Authentication session expired');
           sessionStorage.removeItem('oauth_state');
           setTimeout(() => navigate('/auth?error=invalid_state'), 2000);
