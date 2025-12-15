@@ -2,12 +2,65 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+// Allowed origins for CORS
+const allowedOrigins = [
+  'https://insta-glow-up-39.lovable.app',
+  'http://localhost:5173',
+  'http://localhost:8080',
+];
+
+const getCorsHeaders = (origin: string | null) => {
+  const isAllowed = origin && allowedOrigins.includes(origin);
+  return {
+    'Access-Control-Allow-Origin': isAllowed ? origin : allowedOrigins[0],
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  };
+};
+
+// Valid actions whitelist
+const validActions = [
+  'get_instagram_accounts',
+  'get_user_profile',
+  'get_media',
+  'get_media_insights',
+  'get_user_insights',
+  'get_audience_demographics',
+  'get_online_followers',
+  'get_stories',
+] as const;
+
+// Valid periods for insights
+const validPeriods = ['day', 'week', 'days_28', 'lifetime'] as const;
+
+// Input validation functions
+const isValidAction = (action: unknown): action is typeof validActions[number] => {
+  return typeof action === 'string' && validActions.includes(action as typeof validActions[number]);
+};
+
+const isValidId = (id: unknown): boolean => {
+  return typeof id === 'string' && /^\d+$/.test(id) && id.length <= 50;
+};
+
+const isValidMediaId = (id: unknown): boolean => {
+  return typeof id === 'string' && /^[\d_]+$/.test(id) && id.length <= 100;
+};
+
+const isValidAccessToken = (token: unknown): boolean => {
+  return typeof token === 'string' && token.length >= 20 && token.length <= 500;
+};
+
+const isValidPeriod = (period: unknown): period is typeof validPeriods[number] => {
+  return typeof period === 'string' && validPeriods.includes(period as typeof validPeriods[number]);
+};
+
+const isValidMetrics = (metrics: unknown): boolean => {
+  return typeof metrics === 'string' && metrics.length <= 200 && /^[a-z_,]+$/.test(metrics);
 };
 
 serve(async (req) => {
+  const origin = req.headers.get('origin');
+  const corsHeaders = getCorsHeaders(origin);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -31,10 +84,34 @@ serve(async (req) => {
       throw new Error('Unauthorized');
     }
 
-    const { action, accessToken, userId, mediaId, period, metrics } = await req.json();
+    const body = await req.json();
+    const { action, accessToken, userId, mediaId, period, metrics } = body;
 
-    if (!accessToken) {
-      throw new Error('Access token is required');
+    // Validate action
+    if (!isValidAction(action)) {
+      throw new Error('Invalid action parameter');
+    }
+
+    // Validate access token
+    if (!isValidAccessToken(accessToken)) {
+      throw new Error('Invalid access token format');
+    }
+
+    // Validate optional parameters when present
+    if (userId !== undefined && !isValidId(userId)) {
+      throw new Error('Invalid userId format');
+    }
+
+    if (mediaId !== undefined && !isValidMediaId(mediaId)) {
+      throw new Error('Invalid mediaId format');
+    }
+
+    if (period !== undefined && !isValidPeriod(period)) {
+      throw new Error('Invalid period parameter');
+    }
+
+    if (metrics !== undefined && !isValidMetrics(metrics)) {
+      throw new Error('Invalid metrics format');
     }
 
     const baseUrl = 'https://graph.facebook.com/v18.0';
@@ -66,6 +143,9 @@ serve(async (req) => {
       }
 
       case 'get_user_profile': {
+        if (!userId) {
+          throw new Error('userId is required for this action');
+        }
         const fields = 'id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website';
         response = await fetch(
           `${baseUrl}/${userId}?fields=${fields}&access_token=${accessToken}`
@@ -82,6 +162,9 @@ serve(async (req) => {
       }
 
       case 'get_media': {
+        if (!userId) {
+          throw new Error('userId is required for this action');
+        }
         const mediaFields = 'id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,like_count,comments_count';
         response = await fetch(
           `${baseUrl}/${userId}/media?fields=${mediaFields}&limit=25&access_token=${accessToken}`
@@ -98,6 +181,9 @@ serve(async (req) => {
       }
 
       case 'get_media_insights': {
+        if (!mediaId) {
+          throw new Error('mediaId is required for this action');
+        }
         const insightMetrics = metrics || 'impressions,reach,engagement,saved,shares';
         response = await fetch(
           `${baseUrl}/${mediaId}/insights?metric=${insightMetrics}&access_token=${accessToken}`
@@ -119,6 +205,9 @@ serve(async (req) => {
       }
 
       case 'get_user_insights': {
+        if (!userId) {
+          throw new Error('userId is required for this action');
+        }
         const insightPeriod = period || 'day';
         const insightMetrics = metrics || 'impressions,reach,profile_views,website_clicks,follower_count';
         
@@ -146,6 +235,9 @@ serve(async (req) => {
       }
 
       case 'get_audience_demographics': {
+        if (!userId) {
+          throw new Error('userId is required for this action');
+        }
         response = await fetch(
           `${baseUrl}/${userId}/insights?metric=audience_city,audience_country,audience_gender_age,audience_locale&period=lifetime&access_token=${accessToken}`
         );
@@ -166,6 +258,9 @@ serve(async (req) => {
       }
 
       case 'get_online_followers': {
+        if (!userId) {
+          throw new Error('userId is required for this action');
+        }
         response = await fetch(
           `${baseUrl}/${userId}/insights?metric=online_followers&period=lifetime&access_token=${accessToken}`
         );
@@ -183,6 +278,9 @@ serve(async (req) => {
       }
 
       case 'get_stories': {
+        if (!userId) {
+          throw new Error('userId is required for this action');
+        }
         response = await fetch(
           `${baseUrl}/${userId}/stories?fields=id,media_type,media_url,permalink,timestamp&access_token=${accessToken}`
         );
@@ -198,14 +296,15 @@ serve(async (req) => {
       }
 
       default:
-        throw new Error(`Unknown action: ${action}`);
+        // This should never happen due to validation above
+        throw new Error('Invalid action');
     }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     console.error('Error in instagram-api function:', errorMessage);
     return new Response(JSON.stringify({ error: errorMessage }), {
       status: error instanceof Error && errorMessage === 'Unauthorized' ? 401 : 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...getCorsHeaders(null), 'Content-Type': 'application/json' },
     });
   }
 });
