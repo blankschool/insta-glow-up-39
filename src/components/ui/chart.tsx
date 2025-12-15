@@ -58,6 +58,19 @@ const ChartContainer = React.forwardRef<
 });
 ChartContainer.displayName = "Chart";
 
+/**
+ * Sanitize CSS values to prevent injection attacks.
+ * Only allows alphanumeric characters, hyphens, underscores, parentheses, commas, spaces, dots, and percent signs.
+ */
+const sanitizeCSS = (value: string): string => {
+  return value.replace(/[<>{}"`'\\]/g, '');
+};
+
+/**
+ * ChartStyle component - generates CSS custom properties for chart theming.
+ * SECURITY: ChartConfig should only contain trusted developer-provided values.
+ * All values are sanitized before injection as defense-in-depth.
+ */
 const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
   const colorConfig = Object.entries(config).filter(([_, config]) => config.theme || config.color);
 
@@ -65,22 +78,25 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
     return null;
   }
 
+  const safeId = sanitizeCSS(id);
+
   return (
     <style
       dangerouslySetInnerHTML={{
         __html: Object.entries(THEMES)
-          .map(
-            ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
+          .map(([theme, prefix]) => {
+            const safePrefix = sanitizeCSS(prefix);
+            return `
+${safePrefix} [data-chart=${safeId}] {
 ${colorConfig
   .map(([key, itemConfig]) => {
     const color = itemConfig.theme?.[theme as keyof typeof itemConfig.theme] || itemConfig.color;
-    return color ? `  --color-${key}: ${color};` : null;
+    return color ? `  --color-${sanitizeCSS(key)}: ${sanitizeCSS(color)};` : null;
   })
   .join("\n")}
 }
-`,
-          )
+`;
+          })
           .join("\n"),
       }}
     />

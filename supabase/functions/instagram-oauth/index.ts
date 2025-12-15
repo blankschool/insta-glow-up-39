@@ -2,12 +2,37 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+// Allowed origins for CORS
+const allowedOrigins = [
+  'https://insta-glow-up-39.lovable.app',
+  'http://localhost:5173',
+  'http://localhost:8080',
+];
+
+const getCorsHeaders = (origin: string | null) => {
+  const isAllowed = origin && allowedOrigins.includes(origin);
+  return {
+    'Access-Control-Allow-Origin': isAllowed ? origin : allowedOrigins[0],
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  };
+};
+
+// Valid providers
+const validProviders = ['instagram', 'facebook'] as const;
+
+// Input validation
+const isValidCode = (code: unknown): boolean => {
+  return typeof code === 'string' && code.length >= 10 && code.length <= 1000;
+};
+
+const isValidProvider = (provider: unknown): provider is typeof validProviders[number] => {
+  return typeof provider === 'string' && validProviders.includes(provider as typeof validProviders[number]);
 };
 
 serve(async (req) => {
+  const origin = req.headers.get('origin');
+  const corsHeaders = getCorsHeaders(origin);
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
@@ -33,10 +58,16 @@ serve(async (req) => {
       throw new Error('Unauthorized');
     }
 
-    const { code, provider = 'instagram' } = await req.json();
+    const body = await req.json();
+    const { code, provider = 'instagram' } = body;
     
-    if (!code) {
-      throw new Error('Authorization code is required');
+    // Validate inputs
+    if (!isValidCode(code)) {
+      throw new Error('Invalid authorization code format');
+    }
+
+    if (!isValidProvider(provider)) {
+      throw new Error('Invalid provider parameter');
     }
 
     const clientId = Deno.env.get('INSTAGRAM_APP_ID');
@@ -163,7 +194,7 @@ serve(async (req) => {
       });
 
     if (upsertError) {
-      console.error('Database upsert error:', upsertError);
+      console.error('Database upsert error:', upsertError.message);
       throw new Error('Failed to save connected account');
     }
 
@@ -181,7 +212,7 @@ serve(async (req) => {
     console.error('Instagram OAuth error:', errorMessage);
     return new Response(JSON.stringify({ error: errorMessage, success: false }), {
       status: error instanceof Error && errorMessage === 'Unauthorized' ? 401 : 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      headers: { ...getCorsHeaders(null), 'Content-Type': 'application/json' },
     });
   }
 });

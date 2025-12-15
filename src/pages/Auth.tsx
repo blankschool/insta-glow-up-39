@@ -42,9 +42,11 @@ const Auth = () => {
   // Redirect authenticated users with connected accounts to dashboard
   useEffect(() => {
     if (user && !loading && !loadingAccounts && connectedAccounts.length > 0) {
-      const redirectTo = localStorage.getItem('auth_redirect_to') || '/profile';
-      localStorage.removeItem('auth_redirect_to');
-      navigate(redirectTo);
+      const redirectTo = sessionStorage.getItem('auth_redirect_to') || '/profile';
+      sessionStorage.removeItem('auth_redirect_to');
+      // Validate redirect URL to prevent open redirects
+      const isValidRedirect = redirectTo.startsWith('/') && !redirectTo.startsWith('//');
+      navigate(isValidRedirect ? redirectTo : '/profile');
     }
   }, [user, loading, loadingAccounts, connectedAccounts, navigate]);
 

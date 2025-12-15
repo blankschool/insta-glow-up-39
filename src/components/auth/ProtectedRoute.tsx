@@ -20,14 +20,14 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   // No user session - redirect to login
   if (!user) {
-    // Store the intended destination
-    localStorage.setItem('auth_redirect_to', location.pathname);
+    // Store the intended destination in sessionStorage (more secure than localStorage)
+    sessionStorage.setItem('auth_redirect_to', location.pathname);
     return <Navigate to="/auth" state={{ from: location }} replace />;
   }
 
   // User logged in but no connected account - redirect to /auth (will show connect step)
   if (connectedAccounts.length === 0) {
-    localStorage.setItem('auth_redirect_to', location.pathname);
+    sessionStorage.setItem('auth_redirect_to', location.pathname);
     return <Navigate to="/auth" replace />;
   }
 
