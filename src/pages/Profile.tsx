@@ -140,10 +140,12 @@ const Profile = () => {
                 <p className="text-2xl font-bold">{profile.followers_count?.toLocaleString() || 0}</p>
                 <p className="text-sm text-muted-foreground">Seguidores</p>
               </div>
-              <div>
-                <p className="text-2xl font-bold">{profile.follows_count?.toLocaleString() || 0}</p>
-                <p className="text-sm text-muted-foreground">Seguindo</p>
-              </div>
+              {profile.follows_count !== undefined && (
+                <div>
+                  <p className="text-2xl font-bold">{profile.follows_count?.toLocaleString() || 0}</p>
+                  <p className="text-sm text-muted-foreground">Seguindo</p>
+                </div>
+              )}
             </div>
           )}
 
