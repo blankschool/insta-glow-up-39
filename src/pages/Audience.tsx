@@ -1,7 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useInsights } from '@/hooks/useInsights';
 import { useAuth } from '@/contexts/AuthContext';
-import { useInstagram } from '@/contexts/InstagramContext';
 import { ChartCard } from '@/components/dashboard/ChartCard';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -28,8 +27,7 @@ import {
 
 const Audience = () => {
   const { connectedAccounts } = useAuth();
-  const { demographics, onlineFollowers, loading: instagramLoading } = useInstagram();
-  const { loading, fetchInsights, selectedAccountId } = useInsights();
+  const { loading, data, fetchInsights, selectedAccountId } = useInsights();
   const [activeTab, setActiveTab] = useState('demographics');
 
   const hasAccount = connectedAccounts && connectedAccounts.length > 0;
@@ -40,66 +38,83 @@ const Audience = () => {
     }
   }, [selectedAccountId]);
 
-  // Process demographics data
-  const ageData = demographics.audience_gender_age 
-    ? (() => {
-        const ageGroups: Record<string, number> = {};
-        Object.entries(demographics.audience_gender_age).forEach(([key, value]) => {
-          const age = key.split('.')[1];
-          if (age) {
-            ageGroups[age] = (ageGroups[age] || 0) + (value as number);
-          }
-        });
-        return Object.entries(ageGroups).map(([range, value]) => ({ range, value }));
-      })()
-    : [];
+  // Parse demographics from useInsights data
+  const parsedDemographics = useMemo(() => {
+    const demoData = data?.demographics?.data || [];
+    
+    // Find follower_demographics metric
+    const followerDemo = demoData.find((d: any) => d.name === 'follower_demographics');
+    const followerValues = followerDemo?.values?.[0]?.value || {};
+    
+    // Process age data
+    const ageData = followerValues.age 
+      ? Object.entries(followerValues.age)
+          .map(([range, value]) => ({ range, value: value as number }))
+          .sort((a, b) => {
+            const aStart = parseInt(a.range.split('-')[0]);
+            const bStart = parseInt(b.range.split('-')[0]);
+            return aStart - bStart;
+          })
+      : [];
 
-  const genderData = demographics.audience_gender_age 
-    ? (() => {
-        const genders: Record<string, number> = { M: 0, F: 0 };
-        Object.entries(demographics.audience_gender_age).forEach(([key, value]) => {
-          const gender = key.split('.')[0];
-          if (gender === 'M' || gender === 'F') {
-            genders[gender] += value as number;
-          }
-        });
-        const total = genders.M + genders.F || 1;
-        return [
-          { name: 'Masculino', value: Math.round((genders.M / total) * 100), color: 'hsl(var(--primary))' },
-          { name: 'Feminino', value: Math.round((genders.F / total) * 100), color: 'hsl(var(--muted-foreground))' },
-        ];
-      })()
-    : [];
+    // Process gender data
+    const genderData = followerValues.gender
+      ? (() => {
+          const genderObj = followerValues.gender as Record<string, number>;
+          const total = Object.values(genderObj).reduce((s, v) => s + (v || 0), 0) || 1;
+          return [
+            { name: 'Masculino', value: Math.round(((genderObj.M || 0) / total) * 100), color: 'hsl(var(--primary))' },
+            { name: 'Feminino', value: Math.round(((genderObj.F || 0) / total) * 100), color: 'hsl(var(--muted-foreground))' },
+          ].filter(g => g.value > 0);
+        })()
+      : [];
 
-  const countryData = demographics.audience_country 
-    ? Object.entries(demographics.audience_country)
-        .sort((a, b) => (b[1] as number) - (a[1] as number))
-        .slice(0, 8)
-        .map(([country, value]) => ({ country, value: value as number }))
-    : [];
+    // Process country data
+    const countryData = followerValues.country
+      ? Object.entries(followerValues.country)
+          .sort((a, b) => (b[1] as number) - (a[1] as number))
+          .slice(0, 8)
+          .map(([country, value]) => ({ country, value: value as number }))
+      : [];
 
-  const cityData = demographics.audience_city 
-    ? Object.entries(demographics.audience_city)
-        .sort((a, b) => (b[1] as number) - (a[1] as number))
-        .slice(0, 8)
-        .map(([city, value]) => ({ city, value: value as number }))
-    : [];
+    // Process city data  
+    const cityData = followerValues.city
+      ? Object.entries(followerValues.city)
+          .sort((a, b) => (b[1] as number) - (a[1] as number))
+          .slice(0, 8)
+          .map(([city, value]) => ({ city, value: value as number }))
+      : [];
 
-  // Online followers heatmap
+    return { ageData, genderData, countryData, cityData };
+  }, [data?.demographics]);
+
+  const { ageData, genderData, countryData, cityData } = parsedDemographics;
+
+  // Online followers heatmap - data comes as { "0": 123, "1": 234, ... } for each hour of each day
+  const onlineFollowersData = data?.online_followers || {};
+  
   const heatmapData = useMemo(() => {
     const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     const hours = Array.from({ length: 24 }, (_, i) => i);
-    const hasRealData = Object.keys(onlineFollowers).length > 0;
+    
+    // Check if onlineFollowersData is an object with hour keys (0-23 for each day)
+    const hasRealData = typeof onlineFollowersData === 'object' && Object.keys(onlineFollowersData).length > 0;
     
     return days.map((day, dayIndex) => ({
       day,
       hours: hours.map(hour => {
-        const key = `${dayIndex}_${hour}`;
-        const value = hasRealData ? (onlineFollowers[key] || 0) : 0;
-        return { hour, value: Math.round(value), level: Math.min(5, Math.ceil(value)) };
+        // Online followers API returns { "0": value, "1": value, ... } for each hour
+        // The key is just the hour (0-23) for each day of the week
+        const value = hasRealData ? (onlineFollowersData[hour.toString()] || 0) : 0;
+        const normalizedValue = Math.round(value / 1000); // Normalize for display
+        return { 
+          hour, 
+          value: normalizedValue, 
+          level: Math.min(5, Math.ceil(normalizedValue / 2)) 
+        };
       }),
     }));
-  }, [onlineFollowers]);
+  }, [onlineFollowersData]);
 
   const bestTimes = useMemo(() => {
     const allSlots: { day: string; hour: number; value: number }[] = [];
@@ -114,7 +129,7 @@ const Audience = () => {
   const formatHour = (hour: number) => `${hour.toString().padStart(2, '0')}:00`;
 
   const hasData = ageData.length > 0 || genderData.length > 0 || countryData.length > 0;
-  const hasOnlineData = Object.keys(onlineFollowers).length > 0;
+  const hasOnlineData = Object.keys(onlineFollowersData).length > 0;
 
   if (!hasAccount) {
     return (
@@ -133,7 +148,7 @@ const Audience = () => {
     );
   }
 
-  if (loading || instagramLoading) {
+  if (loading && !data) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -151,6 +166,15 @@ const Audience = () => {
             Conheça seu público e os melhores horários para postar.
           </p>
         </div>
+        <Button 
+          variant="outline" 
+          size="sm" 
+          onClick={() => fetchInsights()}
+          disabled={loading}
+        >
+          <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          Atualizar
+        </Button>
       </section>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
@@ -173,6 +197,7 @@ const Audience = () => {
               <h3 className="font-semibold mb-2">Dados demográficos indisponíveis</h3>
               <p className="text-muted-foreground text-sm">
                 É necessário ter mais de 100 seguidores para visualizar dados demográficos.
+                Os dados podem levar até 48h para aparecer após conectar a conta.
               </p>
             </div>
           ) : (
@@ -186,7 +211,7 @@ const Audience = () => {
                         <BarChart data={ageData}>
                           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                           <XAxis dataKey="range" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
-                          <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" unit="%" />
+                          <YAxis tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
                           <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} />
                           <Bar dataKey="value" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                         </BarChart>
@@ -221,7 +246,7 @@ const Audience = () => {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={countryData} layout="vertical">
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis type="number" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" unit="%" />
+                        <XAxis type="number" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
                         <YAxis dataKey="country" type="category" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" width={80} />
                         <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} />
                         <Bar dataKey="value" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
@@ -238,7 +263,7 @@ const Audience = () => {
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={cityData} layout="vertical">
                         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                        <XAxis type="number" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" unit="%" />
+                        <XAxis type="number" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" />
                         <YAxis dataKey="city" type="category" tick={{ fontSize: 12 }} stroke="hsl(var(--muted-foreground))" width={80} />
                         <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} />
                         <Bar dataKey="value" fill="hsl(var(--muted-foreground))" radius={[0, 4, 4, 0]} />
@@ -258,7 +283,7 @@ const Audience = () => {
               <Clock className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
               <h3 className="font-semibold mb-2">Dados de atividade indisponíveis</h3>
               <p className="text-muted-foreground text-sm">
-                Os dados de atividade dos seguidores serão carregados em breve.
+                Os dados de atividade requerem uma conta Business ou Creator com mais de 100 seguidores.
               </p>
             </div>
           ) : (
