@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { supabase } from '@/integrations/supabase/client';
+import { requireSupabaseJwt } from '@/integrations/supabase/jwt';
 
 const Auth = () => {
   const { user, loading, connectedAccounts, loadingAccounts, connectWithFacebook, signInWithEmail, signUpWithEmail, refreshConnectedAccounts } = useAuth();
@@ -117,7 +118,11 @@ const Auth = () => {
   const handleDevSeed = async () => {
     setIsSeedingDev(true);
     try {
-      const { data, error } = await supabase.functions.invoke('seed-test-account', { body: {} });
+      const jwt = await requireSupabaseJwt();
+      const { data, error } = await supabase.functions.invoke('seed-test-account', {
+        headers: { Authorization: `Bearer ${jwt}` },
+        body: {},
+      });
       if (error) throw error;
       if (!data?.success) throw new Error(data?.error || 'Seed failed');
 

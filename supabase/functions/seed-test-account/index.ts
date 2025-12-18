@@ -4,9 +4,20 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const allowedOrigins = [
   "https://insta-glow-up-39.lovable.app",
+  "https://lovable.dev",
   "http://localhost:5173",
   "http://localhost:8080",
 ];
+
+const isLovableOrigin = (origin: string) => {
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "https:") return false;
+    return url.hostname === "lovable.dev" || url.hostname.endsWith(".lovable.dev");
+  } catch {
+    return false;
+  }
+};
 
 const isDevOrigin = (origin: string) => {
   try {
@@ -27,11 +38,12 @@ const isDevOrigin = (origin: string) => {
 };
 
 const getCorsHeaders = (origin: string | null) => {
-  const isAllowed = !!origin && (allowedOrigins.includes(origin) || isDevOrigin(origin));
+  const isAllowed = !!origin && (allowedOrigins.includes(origin) || isLovableOrigin(origin) || isDevOrigin(origin));
   return {
     "Access-Control-Allow-Origin": isAllowed ? origin : allowedOrigins[0],
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-dev-secret",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
   };
 };
 

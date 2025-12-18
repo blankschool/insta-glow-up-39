@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, Session, AuthError } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { requireSupabaseJwt } from '@/integrations/supabase/jwt';
 
 interface ConnectedAccount {
   id: string;
@@ -151,7 +152,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (shouldSeed) {
-          const { error: seedError } = await supabase.functions.invoke('seed-test-account', { body: {} });
+          const jwt = await requireSupabaseJwt();
+          const { error: seedError } = await supabase.functions.invoke('seed-test-account', {
+            headers: { Authorization: `Bearer ${jwt}` },
+            body: {},
+          });
           if (seedError) console.warn('[dev] seed-test-account failed:', seedError.message);
         }
 
@@ -180,7 +185,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     devSeedRanRef.current = true;
     (async () => {
       try {
-        const { error: seedError } = await supabase.functions.invoke('seed-test-account', { body: {} });
+        const jwt = await requireSupabaseJwt();
+        const { error: seedError } = await supabase.functions.invoke('seed-test-account', {
+          headers: { Authorization: `Bearer ${jwt}` },
+          body: {},
+        });
         if (seedError) {
           console.warn('[dev] seed-test-account failed:', seedError.message);
           return;
