@@ -1,8 +1,7 @@
 import { useLocation } from 'react-router-dom';
-import { ExportDropdown } from '@/components/ExportDropdown';
 import { DateRangePicker } from '@/components/DateRangePicker';
-import { useAccount } from '@/contexts/AccountContext';
 import { useDateRange } from '@/contexts/DateRangeContext';
+import { useDashboardData } from '@/hooks/useDashboardData';
 
 const pageNames: Record<string, string> = {
   '/': 'Minhas Contas',
@@ -24,13 +23,11 @@ const pageNames: Record<string, string> = {
 
 export function Topbar() {
   const location = useLocation();
-  const { selectedAccount } = useAccount();
   const { dateRange, setDateRange } = useDateRange();
+  const { data } = useDashboardData();
   const pageName = pageNames[location.pathname] || 'Dashboard';
 
-  const username = selectedAccount?.account_username 
-    ? `@${selectedAccount.account_username}` 
-    : selectedAccount?.account_name || 'Selecione uma conta';
+  const username = data?.profile?.username ? `@${data.profile.username}` : 'Instagram Business';
 
   return (
     <header className="topbar">
@@ -38,9 +35,9 @@ export function Topbar() {
         <div className="flex flex-wrap items-center gap-3">
           {/* Handle */}
           <div className="chip">
-            {selectedAccount?.profile_picture_url ? (
+            {data?.profile?.profile_picture_url ? (
               <img 
-                src={selectedAccount.profile_picture_url} 
+                src={data.profile.profile_picture_url} 
                 alt={username}
                 className="h-7 w-7 rounded-full border border-border object-cover"
               />
@@ -60,10 +57,7 @@ export function Topbar() {
           />
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-2.5">
-          <ExportDropdown />
-        </div>
+        <div />
       </div>
     </header>
   );

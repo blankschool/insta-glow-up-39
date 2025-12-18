@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useInsights } from '@/hooks/useInsights';
-import { useAuth } from '@/contexts/AuthContext';
-import { useAccount } from '@/contexts/AccountContext';
+import { useDashboardData } from '@/hooks/useDashboardData';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { ChartCard } from '@/components/dashboard/ChartCard';
 import { Button } from '@/components/ui/button';
@@ -39,29 +37,20 @@ import {
 const POSTS_PER_PAGE = 25;
 
 const Posts = () => {
-  const { connectedAccounts } = useAuth();
-  const { selectedAccount } = useAccount();
-  const { loading, error, data, unfilteredData, fetchInsights, resetData, selectedAccountId } = useInsights();
+  const { data, loading, error, refresh } = useDashboardData();
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'engagement' | 'likes' | 'comments' | 'saves' | 'reach'>('engagement');
   const [displayCount, setDisplayCount] = useState(POSTS_PER_PAGE);
 
-  const hasAccount = connectedAccounts && connectedAccounts.length > 0;
-
-  // Refetch when account changes
+  // Initial fetch already handled by react-query; reset pagination when data changes.
   useEffect(() => {
-    if (hasAccount && selectedAccountId) {
-      resetData();
-      setDisplayCount(POSTS_PER_PAGE);
-      handleRefresh();
-    }
-  }, [selectedAccountId]);
+    setDisplayCount(POSTS_PER_PAGE);
+  }, [data?.snapshot_date]);
 
   const handleRefresh = async (forceRefresh = false) => {
-    const result = await fetchInsights(undefined, forceRefresh ? { forceRefresh: true, preferCache: false } : {});
-    if (result) {
-      setLastUpdated(new Date().toLocaleString('pt-BR'));
-    }
+    // `forceRefresh` kept for UI compatibility; edge function can support it later.
+    await refresh();
+    setLastUpdated(new Date().toLocaleString('pt-BR'));
   };
 
   const handleLoadMore = () => {
@@ -95,28 +84,7 @@ const Posts = () => {
     a.click();
   };
 
-  if (!hasAccount) {
-    return (
-      <div className="space-y-4">
-        <section className="flex flex-wrap items-end justify-between gap-3 py-2">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Posts</h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              Análise detalhada de performance dos posts.
-            </p>
-          </div>
-        </section>
-        <div className="chart-card p-8 text-center">
-          <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-          <p className="text-muted-foreground">Conecte sua conta do Instagram para ver a análise de posts.</p>
-        </div>
-      </div>
-    );
-  }
-
-  const filteredPosts = data?.posts || [];
-  const allPosts = unfilteredData?.posts || filteredPosts;
-  const posts = allPosts;
+  const posts = data?.posts || [];
   
   // Aggregate metrics
   const totalLikes = posts.reduce((sum: number, p: any) => sum + (p.like_count || 0), 0);

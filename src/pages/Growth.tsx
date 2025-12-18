@@ -1,4 +1,4 @@
-import { useInstagram } from '@/contexts/InstagramContext';
+import { useDashboardData } from '@/hooks/useDashboardData';
 import { MetricCard } from '@/components/dashboard/MetricCard';
 import { ChartCard } from '@/components/dashboard/ChartCard';
 import { 
@@ -26,7 +26,8 @@ import {
 } from 'recharts';
 
 const Growth = () => {
-  const { profile, loading } = useInstagram();
+  const { data, loading } = useDashboardData();
+  const profile = data?.profile ?? null;
 
   if (loading) {
     return (

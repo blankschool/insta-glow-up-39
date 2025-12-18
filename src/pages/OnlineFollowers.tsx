@@ -1,10 +1,11 @@
-import { useInstagram } from '@/contexts/InstagramContext';
+import { useDashboardData } from '@/hooks/useDashboardData';
 import { ChartCard } from '@/components/dashboard/ChartCard';
 import { Clock, Users, TrendingUp, Loader2 } from 'lucide-react';
 import { useMemo } from 'react';
 
 const OnlineFollowers = () => {
-  const { onlineFollowers, loading } = useInstagram();
+  const { data, loading } = useDashboardData();
+  const onlineFollowers = (data?.online_followers as Record<string, number> | undefined) ?? {};
 
   // Generate heatmap data
   const heatmapData = useMemo(() => {

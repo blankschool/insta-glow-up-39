@@ -1,4 +1,4 @@
-import { useInstagram } from '@/contexts/InstagramContext';
+import { useDashboardData } from '@/hooks/useDashboardData';
 import { ChartCard } from '@/components/dashboard/ChartCard';
 import { 
   Users, 
@@ -21,7 +21,8 @@ import {
 } from 'recharts';
 
 const Demographics = () => {
-  const { demographics, loading } = useInstagram();
+  const { data, loading } = useDashboardData();
+  const demographics = (data?.demographics as any) ?? {};
 
   if (loading) {
     return (
