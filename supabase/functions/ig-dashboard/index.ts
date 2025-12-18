@@ -215,7 +215,7 @@ async function fetchIgUserInsights(accessToken: string, businessId: string, time
     "total_interactions",
     "likes",
     "comments",
-    "saved",
+    "saves",
     "shares",
     "replies",
     "profile_links_taps",
@@ -223,23 +223,32 @@ async function fetchIgUserInsights(accessToken: string, businessId: string, time
   ];
 
   let user_insights: MetricValue[] = [];
-  try {
-    const json = await graphGet(`/${businessId}/insights`, accessToken, {
-      metric: dayMetrics.join(","),
-      period: "day",
-      since,
-      until,
-    });
-    user_insights = toMetricValues(json);
-  } catch (e) {
-    messages.push(`user_insights failed: ${(e as Error).message}`);
+  // Fetch per-metric to avoid one incompatible metric breaking the whole batch.
+  for (const metric of dayMetrics) {
+    try {
+      const json = await graphGet(`/${businessId}/insights`, accessToken, {
+        metric,
+        period: "day",
+        since,
+        until,
+        metric_type: "total_value",
+      });
+      const metricValue = toMetricValues(json)[0];
+      if (metricValue) user_insights.push(metricValue);
+    } catch (e) {
+      messages.push(`${metric} failed: ${(e as Error).message}`);
+    }
   }
 
   let engaged_audience_demographics: MetricValue | null = null;
   try {
     const json = await graphGet(`/${businessId}/insights`, accessToken, {
       metric: "engaged_audience_demographics",
-      period: timeframe === "this_month" || timeframe === "last_30_days" ? "this_month" : "this_week",
+      metric_type: "total_value",
+      // Docs describe `this_week` / `this_month` timeframes; Graph still requires `period`.
+      period: "lifetime",
+      breakdown: "country",
+      timeframe: timeframe === "this_month" || timeframe === "last_30_days" ? "this_month" : "this_week",
     });
     engaged_audience_demographics = toMetricValues(json)[0] ?? null;
   } catch (e) {
@@ -251,6 +260,8 @@ async function fetchIgUserInsights(accessToken: string, businessId: string, time
     const json = await graphGet(`/${businessId}/insights`, accessToken, {
       metric: "follower_demographics",
       period: "lifetime",
+      metric_type: "total_value",
+      breakdown: "country",
     });
     follower_demographics = toMetricValues(json)[0] ?? null;
   } catch (e) {
@@ -264,6 +275,7 @@ async function fetchIgUserInsights(accessToken: string, businessId: string, time
       period: "day",
       since,
       until,
+      metric_type: "total_value",
     });
     follows_and_unfollows = toMetricValues(json)[0] ?? null;
   } catch (e) {
@@ -413,4 +425,3 @@ serve(async (req) => {
     });
   }
 });
-
