@@ -41,17 +41,19 @@ const getCorsHeaders = (origin: string | null) => {
     !!origin && (allowedOrigins.includes(origin) || isLovableOrigin(origin) || isDevOrigin(origin));
   return {
     "Access-Control-Allow-Origin": isAllowed ? origin : allowedOrigins[0],
-    "Access-Control-Allow-Headers":
-      "authorization, x-client-info, apikey, content-type, x-dev-secret",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-dev-secret",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     Vary: "Origin",
   };
 };
 
+type Timeframe = "this_week" | "this_month" | "last_7_days" | "last_30_days";
+
 type DashboardRequest = {
   businessId?: string;
-  maxPosts?: number;
-  maxStories?: number;
+  timeframe?: Timeframe;
+  maxMedia?: number;
+  includePage?: boolean;
 };
 
 type InstagramProfile = {
@@ -73,7 +75,7 @@ type MediaItem = {
   media_url?: string;
   permalink?: string;
   thumbnail_url?: string;
-  timestamp: string;
+  timestamp?: string;
   like_count?: number;
   comments_count?: number;
   insights?: Record<string, number>;
@@ -84,14 +86,35 @@ type StoryItem = {
   media_type: string;
   media_url?: string;
   permalink?: string;
-  timestamp: string;
+  timestamp?: string;
   insights?: Record<string, number>;
+};
+
+type MetricPoint = { value: number; end_time?: string };
+type MetricValue = {
+  name: string;
+  period?: string;
+  values?: MetricPoint[];
+  value?: number | Record<string, unknown>;
+  title?: string;
+  description?: string;
 };
 
 const GRAPH_BASE = "https://graph.facebook.com/v24.0";
 
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function clampInt(value: unknown, fallback: number, min: number, max: number): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function getTimeframeRange(timeframe: Timeframe): { since: string; until: string } {
+  const now = new Date();
+  const until = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const days = timeframe === "this_month" || timeframe === "last_30_days" ? 30 : 7;
+  const since = new Date(until.getTime() - days * 24 * 60 * 60 * 1000);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { since: fmt(since), until: fmt(until) };
 }
 
 async function graphGet(
@@ -120,36 +143,161 @@ async function graphGet(
   return json;
 }
 
-async function fetchMediaInsights(accessToken: string, mediaId: string): Promise<Record<string, number>> {
-  const json = await graphGet(`/${mediaId}/insights`, accessToken, {
-    metric: "impressions,reach,saved,shares,plays,video_views",
-  });
+function toMetricValues(json: unknown): MetricValue[] {
   const data = (json as { data?: unknown }).data;
-  if (!Array.isArray(data)) return {};
+  if (!Array.isArray(data)) return [];
+  return data
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const name = typeof (item as any).name === "string" ? (item as any).name : null;
+      if (!name) return null;
+
+      const period = typeof (item as any).period === "string" ? (item as any).period : undefined;
+      const title = typeof (item as any).title === "string" ? (item as any).title : undefined;
+      const description = typeof (item as any).description === "string" ? (item as any).description : undefined;
+      const values = Array.isArray((item as any).values)
+        ? (item as any).values.map((v: any) => ({ value: Number(v.value), end_time: v.end_time }))
+        : undefined;
+      const value = (item as any).value;
+      return { name, period, title, description, values, value };
+    })
+    .filter(Boolean) as MetricValue[];
+}
+
+function parseInsightsToNumbers(json: unknown): Record<string, number> {
+  const metrics = toMetricValues(json);
   const out: Record<string, number> = {};
-  for (const item of data) {
-    const name = typeof item === "object" && item && "name" in item ? (item as any).name : null;
-    const values = typeof item === "object" && item && "values" in item ? (item as any).values : null;
-    const lastValue = Array.isArray(values) && values.length > 0 ? values[values.length - 1]?.value : null;
-    if (typeof name === "string" && typeof lastValue === "number") out[name] = lastValue;
+  for (const m of metrics) {
+    if (typeof m.value === "number") out[m.name] = m.value;
+    if (Array.isArray(m.values) && m.values.length > 0) out[m.name] = m.values[m.values.length - 1].value;
   }
   return out;
 }
 
+async function fetchMediaInsights(
+  accessToken: string,
+  media: { id: string; media_type: string },
+): Promise<Record<string, number>> {
+  const reelMetrics = [
+    "reach",
+    "impressions",
+    "saved",
+    "shares",
+    "total_interactions",
+    "plays",
+    "video_views",
+    "clips_replays_count",
+    "ig_reels_aggregated_all_plays_count",
+    "ig_reels_avg_watch_time",
+    "ig_reels_video_view_total_time",
+  ];
+  const postMetrics = ["reach", "impressions", "saved", "shares", "total_interactions", "views", "plays", "video_views"];
+  const metrics =
+    media.media_type === "REELS" || media.media_type === "VIDEO" ? reelMetrics : postMetrics;
+  const json = await graphGet(`/${media.id}/insights`, accessToken, { metric: metrics.join(",") });
+  return parseInsightsToNumbers(json);
+}
+
 async function fetchStoryInsights(accessToken: string, storyId: string): Promise<Record<string, number>> {
   const json = await graphGet(`/${storyId}/insights`, accessToken, {
-    metric: "impressions,reach,replies,exits,taps_forward,taps_back",
+    metric: "impressions,reach,replies,exits,taps_forward,taps_back,navigation",
   });
-  const data = (json as { data?: unknown }).data;
-  if (!Array.isArray(data)) return {};
-  const out: Record<string, number> = {};
-  for (const item of data) {
-    const name = typeof item === "object" && item && "name" in item ? (item as any).name : null;
-    const values = typeof item === "object" && item && "values" in item ? (item as any).values : null;
-    const lastValue = Array.isArray(values) && values.length > 0 ? values[values.length - 1]?.value : null;
-    if (typeof name === "string" && typeof lastValue === "number") out[name] = lastValue;
+  return parseInsightsToNumbers(json);
+}
+
+async function fetchIgUserInsights(accessToken: string, businessId: string, timeframe: Timeframe) {
+  const { since, until } = getTimeframeRange(timeframe);
+
+  const messages: string[] = [];
+  const dayMetrics = [
+    "accounts_engaged",
+    "reach",
+    "total_interactions",
+    "likes",
+    "comments",
+    "saved",
+    "shares",
+    "replies",
+    "profile_links_taps",
+    "views",
+  ];
+
+  let user_insights: MetricValue[] = [];
+  try {
+    const json = await graphGet(`/${businessId}/insights`, accessToken, {
+      metric: dayMetrics.join(","),
+      period: "day",
+      since,
+      until,
+    });
+    user_insights = toMetricValues(json);
+  } catch (e) {
+    messages.push(`user_insights failed: ${(e as Error).message}`);
   }
-  return out;
+
+  let engaged_audience_demographics: MetricValue | null = null;
+  try {
+    const json = await graphGet(`/${businessId}/insights`, accessToken, {
+      metric: "engaged_audience_demographics",
+      period: timeframe === "this_month" || timeframe === "last_30_days" ? "this_month" : "this_week",
+    });
+    engaged_audience_demographics = toMetricValues(json)[0] ?? null;
+  } catch (e) {
+    messages.push(`engaged_audience_demographics failed: ${(e as Error).message}`);
+  }
+
+  let follower_demographics: MetricValue | null = null;
+  try {
+    const json = await graphGet(`/${businessId}/insights`, accessToken, {
+      metric: "follower_demographics",
+      period: "lifetime",
+    });
+    follower_demographics = toMetricValues(json)[0] ?? null;
+  } catch (e) {
+    messages.push(`follower_demographics failed: ${(e as Error).message}`);
+  }
+
+  let follows_and_unfollows: MetricValue | null = null;
+  try {
+    const json = await graphGet(`/${businessId}/insights`, accessToken, {
+      metric: "follows_and_unfollows",
+      period: "day",
+      since,
+      until,
+    });
+    follows_and_unfollows = toMetricValues(json)[0] ?? null;
+  } catch (e) {
+    messages.push(`follows_and_unfollows failed: ${(e as Error).message}`);
+  }
+
+  return { user_insights, engaged_audience_demographics, follower_demographics, follows_and_unfollows, messages };
+}
+
+async function fetchPageInsights(accessToken: string, pageId: string, timeframe: Timeframe) {
+  const { since, until } = getTimeframeRange(timeframe);
+  const messages: string[] = [];
+  const metrics = [
+    "page_post_engagements",
+    "page_impressions",
+    "page_impressions_unique",
+    "page_views_total",
+    "page_fans",
+    "page_total_actions",
+    "page_daily_follows",
+    "page_daily_unfollows_unique",
+  ];
+  try {
+    const json = await graphGet(`/${pageId}/insights`, accessToken, {
+      metric: metrics.join(","),
+      period: "day",
+      since,
+      until,
+    });
+    return { page_insights: toMetricValues(json), messages };
+  } catch (e) {
+    messages.push(`page_insights failed: ${(e as Error).message}`);
+    return { page_insights: [], messages };
+  }
 }
 
 serve(async (req) => {
@@ -167,43 +315,40 @@ serve(async (req) => {
 
     const businessId = body.businessId ?? Deno.env.get("IG_BUSINESS_ID") ?? "";
     const accessToken = Deno.env.get("IG_ACCESS_TOKEN") ?? "";
-    if (!businessId || !accessToken) {
-      throw new Error("Missing IG_BUSINESS_ID / IG_ACCESS_TOKEN secrets");
-    }
+    if (!businessId || !accessToken) throw new Error("Missing IG_BUSINESS_ID / IG_ACCESS_TOKEN secrets");
 
-    const maxPosts = typeof body.maxPosts === "number" ? Math.max(1, Math.min(50, body.maxPosts)) : 25;
-    const maxStories = typeof body.maxStories === "number"
-      ? Math.max(1, Math.min(50, body.maxStories))
-      : 25;
+    const timeframe: Timeframe = body.timeframe ?? "this_week";
+    const includePage = !!body.includePage;
+    const maxMedia = clampInt(body.maxMedia, 25, 1, 50);
 
     const profileJson = await graphGet(`/${businessId}`, accessToken, {
-      fields:
-        "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website",
+      fields: "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website",
     });
     const profile = profileJson as InstagramProfile;
 
     const mediaJson = await graphGet(`/${businessId}/media`, accessToken, {
-      fields:
-        "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,like_count,comments_count",
-      limit: String(maxPosts),
+      fields: "id,caption,media_type,media_url,permalink,thumbnail_url,timestamp,like_count,comments_count",
+      limit: String(maxMedia),
     });
-
     const mediaData = (mediaJson as { data?: unknown }).data;
     const mediaItems: MediaItem[] = Array.isArray(mediaData) ? (mediaData as any) : [];
 
     const storiesJson = await graphGet(`/${businessId}/stories`, accessToken, {
       fields: "id,media_type,media_url,permalink,timestamp",
-      limit: String(maxStories),
+      limit: "25",
     });
     const storiesData = (storiesJson as { data?: unknown }).data;
     const storyItems: StoryItem[] = Array.isArray(storiesData) ? (storiesData as any) : [];
 
-    // Fetch per-item insights (best-effort; partial failures won't break the whole response).
     const mediaWithInsights = await Promise.all(
       mediaItems.map(async (m) => {
         try {
-          const insights = await fetchMediaInsights(accessToken, m.id);
-          const engagement = (m.like_count ?? 0) + (m.comments_count ?? 0) + (insights.saved ?? 0);
+          const insights = await fetchMediaInsights(accessToken, { id: m.id, media_type: m.media_type });
+          const engagement =
+            (m.like_count ?? 0) +
+            (m.comments_count ?? 0) +
+            (insights.saved ?? 0) +
+            (insights.shares ?? 0);
           return { ...m, insights: { ...insights, engagement } };
         } catch {
           const engagement = (m.like_count ?? 0) + (m.comments_count ?? 0);
@@ -217,9 +362,7 @@ serve(async (req) => {
         try {
           const insights = await fetchStoryInsights(accessToken, s.id);
           const completionRate =
-            insights.impressions && insights.exits
-              ? Math.round((1 - insights.exits / insights.impressions) * 100)
-              : 0;
+            insights.impressions && insights.exits ? Math.round((1 - insights.exits / insights.impressions) * 100) : 0;
           return { ...s, insights: { ...insights, completion_rate: completionRate } };
         } catch {
           return { ...s, insights: {} };
@@ -227,66 +370,19 @@ serve(async (req) => {
       }),
     );
 
-    // Aggregate stories metrics for UI compatibility.
-    type StoryInsightsData = {
-      impressions?: number;
-      reach?: number;
-      replies?: number;
-      exits?: number;
-      taps_forward?: number;
-      taps_back?: number;
-      completion_rate?: number;
-    };
+    const ig = await fetchIgUserInsights(accessToken, businessId, timeframe);
+    const messages: string[] = [...ig.messages];
 
-    const storiesAggregate = storiesWithInsights.reduce(
-      (acc, s) => {
-        const insights = (s.insights ?? {}) as StoryInsightsData;
-        acc.total_stories += 1;
-        acc.total_impressions += asNumber(insights.impressions) ?? 0;
-        acc.total_reach += asNumber(insights.reach) ?? 0;
-        acc.total_replies += asNumber(insights.replies) ?? 0;
-        acc.total_exits += asNumber(insights.exits) ?? 0;
-        acc.total_taps_forward += asNumber(insights.taps_forward) ?? 0;
-        acc.total_taps_back += asNumber(insights.taps_back) ?? 0;
-        return acc;
-      },
-      {
-        total_stories: 0,
-        total_impressions: 0,
-        total_reach: 0,
-        total_replies: 0,
-        total_exits: 0,
-        total_taps_forward: 0,
-        total_taps_back: 0,
-        avg_completion_rate: 0,
-      },
-    );
-    if (storiesAggregate.total_impressions > 0) {
-      storiesAggregate.avg_completion_rate = Math.round(
-        (1 - storiesAggregate.total_exits / storiesAggregate.total_impressions) * 100,
-      );
-    }
-
-    // Demographics + online followers (best effort; not all accounts have these metrics enabled).
-    let demographics: Record<string, unknown> = {};
-    let onlineFollowers: Record<string, number> = {};
-    try {
-      const demoJson = await graphGet(`/${businessId}/insights`, accessToken, {
-        metric: "audience_gender_age,audience_country,audience_city,audience_locale",
-        period: "lifetime",
-      });
-      demographics = demoJson as Record<string, unknown>;
-    } catch {
-      demographics = {};
-    }
-    try {
-      const onlineJson = await graphGet(`/${businessId}/insights`, accessToken, {
-        metric: "online_followers",
-        period: "lifetime",
-      });
-      onlineFollowers = onlineJson as unknown as Record<string, number>;
-    } catch {
-      onlineFollowers = {};
+    let page_insights: MetricValue[] | null = null;
+    if (includePage) {
+      const pageId = Deno.env.get("FB_PAGE_ID") ?? "";
+      if (!pageId) {
+        messages.push("FB_PAGE_ID not set; skipping page insights");
+      } else {
+        const res = await fetchPageInsights(accessToken, pageId, timeframe);
+        page_insights = res.page_insights;
+        messages.push(...res.messages);
+      }
     }
 
     const duration = Date.now() - startedAt;
@@ -298,18 +394,16 @@ serve(async (req) => {
         snapshot_date: new Date().toISOString().slice(0, 10),
         provider: "instagram_graph_api",
         profile,
+        user_insights: ig.user_insights,
+        engaged_audience_demographics: ig.engaged_audience_demographics,
+        follower_demographics: ig.follower_demographics,
+        follows_and_unfollows: ig.follows_and_unfollows,
         media: mediaWithInsights,
-        posts: mediaWithInsights,
-        total_posts: mediaWithInsights.length,
         stories: storiesWithInsights,
-        stories_aggregate: storiesAggregate,
-        demographics,
-        online_followers: onlineFollowers,
-        messages: [],
+        page_insights,
+        messages,
       }),
-      {
-        headers: { ...corsHeaders, "Content-Type": "application/json", "X-Request-Id": requestId },
-      },
+      { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Request-Id": requestId } },
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Unknown error";
